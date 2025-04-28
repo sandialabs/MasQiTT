@@ -1,0 +1,13 @@
+Notices for Mosquitto
+Produced and maintained by the Eclipse Mosquitto project.
+
+Project home: https://projects.eclipse.org/projects/iot.mosquitto
+
+Eclipse Mosquitto trademarks of the Eclipse Foundation. Eclipse, and the Eclipse Logo are registered trademarks of the Eclipse Foundation.
+
+All content is the property of the respective authors or their employers. For more information regarding authorship of content, please consult the listed source code repository logs.
+
+
+This project is dual licensed under the Eclipse Public License 2.0 and the Eclipse Distribution License 1.0 which can be found in the LICENSE.txt and LICENSE2.txt files. Made available under the terms of the Eclipse Public License v2.0 which is available at http://www.eclipse.org/legal/epl-v10.html
+
+Contributors may not remove or alter any copyright notices contained within the third-party code. Each Contributor must identify itself as the originator of its Contribution, if any, in a manner that reasonably allows subsequent Recipients to identify the originator of the Contribution. You must make the source code available even if the software will be shipped in executable form only.

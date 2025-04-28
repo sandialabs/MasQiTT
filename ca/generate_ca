@@ -1,0 +1,44 @@
+#!/bin/bash
+
+CADIR="${HOME}/ca"
+
+if [ ! -d ${CADIR} ] ; then
+    echo "$(basename $0): must have ${CADIR} directory, bailing"
+    exit 1
+fi
+
+cd ${CADIR}
+
+if [ -f ca-crt.pem ] ; then
+    echo "$(basename $0): CA certificate already exists, bailing"
+    exit 1
+fi
+
+CA_SUBJ="/O=MasQiTT/CN=MasQiTT Certification Authority"
+KMS_SUBJ="/O=MasQiTT/CN=MasQiTT Key Management Server"
+BITS=2048
+
+# generate CA
+
+# https://www.wolfssl.com/forums/topic1440-solved-generate-keyscertificates-using-openssl.html
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:${BITS} \
+	-out ca-key.pem
+openssl req -x509 -new -noenc \
+	-addext basicConstraints=critical,CA:TRUE,pathlen:0 \
+	-addext keyUsage=critical,digitalSignature,keyCertSign \
+	-days 3650 -key ca-key.pem -sha256 -out ca-crt.pem -subj "${CA_SUBJ}"
+chmod -w ca-key.pem ca-crt.pem
+
+# generate kms cert
+
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:${BITS}	-out kms-key.pem
+openssl req -new -noenc -key kms-key.pem -out kms-csr.pem -sha256 \
+	-addext keyUsage=digitalSignature,keyEncipherment,keyAgreement \
+	-subj "${KMS_SUBJ}"
+openssl x509 -req \
+	-in kms-csr.pem -CA ca-crt.pem -CAkey ca-key.pem \
+	-CAcreateserial	-days 3650 -out kms-crt.pem
+rm kms-csr.pem
+chmod -w kms-key.pem kms-crt.pem
+
+exit 0

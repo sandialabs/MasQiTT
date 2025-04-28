@@ -1,0 +1,83 @@
+#!/bin/bash
+
+CADIR="${HOME}/ca"
+
+if [ ! -d ${CADIR} ] ; then
+    echo "$(basename $0): must have ${CADIR} directory, bailing"
+    exit 1
+fi
+
+cd ${CADIR}
+
+if [ ! -f ca-crt.pem ] ; then
+    echo "$(basename $0): no CA certificate"
+    echo "run generate_ca"
+    exit 1
+fi
+
+if [ -z ${1} -o -z ${2} ] ; then
+    echo "usage: $(basename $0) ClientID role"
+    exit 1
+fi
+
+if [ "16" != $(echo -n ${1} | wc -c) ] ; then
+    echo "$(basename $0): ClientID must be 16 characters long"
+    exit 1
+fi
+
+if grep -q -e "${1}" ../kms.cfg ; then
+    echo "$(basename $0): ${1} already enrolled, bailing"
+    exit 1
+fi
+
+if [ -f "${1}-crt.pem" ] ; then
+    echo "$(basename $0): ${1}-crt.pem already exists, bailing"
+    exit 1
+fi
+
+case ${2} in
+    pub)
+	role=publisher
+	;;
+    sub)
+	role=subscriber
+	;;
+    both)
+	role=both
+	;;
+    *)
+	echo "usage: $(basename $0) ClientID role"
+	echo "    role must be one of: pub sub both"
+	exit 1
+	;;
+esac
+
+if grep -q ${1} ../kms.cfg ; then
+    echo "$(basename $0): found ${1} in kms.cfg, bailing"
+    exit 1
+fi
+
+SUBJ="/O=MasQiTT/CN=${1}"
+BITS=2048
+
+# generate client cert
+
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:${BITS}	\
+	-out ${1}-key.pem 
+openssl req -new -noenc -key ${1}-key.pem -out ${1}-csr.pem -sha256 \
+	-addext keyUsage=digitalSignature,keyEncipherment,keyAgreement \
+	-subj "${SUBJ}"
+openssl x509 -req \
+	-in ${1}-csr.pem -CA ca-crt.pem -CAkey ca-key.pem \
+	-CAcreateserial -days 3650 -out ${1}-crt.pem
+rm ${1}-csr.pem
+chmod -w ${1}-key.pem ${1}-crt.pem
+
+sed -i \
+    -e "/clients: (/a\ \ \{ id = \"${1}\";\n    role = \"${role}\";\n  \}," \
+    ../kms.cfg
+
+echo
+echo "If the KMS is running, 'kms_ctrl -c' so the KMS recognizes ${1}."
+
+exit 0

@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+
+'''
+miracl is set up to compile using an interactive configuration script. That
+doesn't work so well in an automated build environment.
+
+It is possible to specify which modules to compile non-interactively, but
+each module is identified by an ordinal number corresponding to its place in
+a list of all available modules. That doesn't work well if the list changes
+in a subsequent release of miracl.
+
+This (non-interactive) tool compiles miracl's 64-bit C-language core.a
+library by specifying those modules -- by name -- in a configuration
+file. This is much more amenable to a make/cmake environment.
+
+To generate a sample configuration file, use the -g option.
+To get a list of available modules, use the -m option.
+
+After compilation miracl's core.a library can be copied to a convenient
+place using the -d option.`
+'''
+
+import os
+import stat
+import re
+import argparse
+import json
+import tempfile
+
+# Get print() to always flush without having to say it every time.
+# This keeps the print()s inline with config64.py's output if doing
+# something like "compile_miracl | tee compile.log"
+import functools
+print = functools.partial(print, flush=True)
+
+_mod_mat = re.compile('(\d+)\.\s+(\w+)')
+
+_srcdir_dflt = '.'
+_config_cmd = './config64.py'
+_corelib = 'core.a'
+_orig_dir = None
+
+_E = '\033[1;91m'	# error
+_W = '\033[1;93m'	# warn
+_I = '\033[1;92m'	# info
+_C = '\033[1;96m'	# cmd
+_X = '\033[0m'		# restore
+
+def print_config():
+    '''
+    Print an example config file.
+    '''
+    print(f'''# there are no comments in JSON, so strip these out :-)
+{{
+    ### The top level miracl core directory
+    ### Optional, overridden by --srcdir on command line if provided
+    ### Default if not specified: {_srcdir_dflt}
+    # "srcdir": "/home/user/miracl-core-4.1",
+
+    ### After compilation copy core.a to this directory or file
+    ### Optional, overridden by --dest on command line if provided
+    ### If not specified, core.a is left in place
+    # "dest": "/home/user/masqitt/libmiracl.a",
+
+    ### Modules from miracl core to include in core.a
+    ### This section is required, ordering and case are unimportant
+    "modules": [
+        "ed25519",
+        "c13318",
+        "bls48581",
+        "bls48286"
+    ]
+}}''')
+
+_mod_list = {}
+_mod_selection = []
+    
+def get_modules(cfg, echo):
+    '''
+    Run the miracl config script and scrape module names.
+    As a side-effect, some "essential" miracl files are compiled
+    and cwd is changed to <srcdir>/c
+
+    If echo is True, print the output from the config script
+    '''
+    global _mod_list, _orig_dir
+
+    srcpath = f'{cfg["srcdir"]}/c'
+    if not (os.path.exists(srcpath) and os.path.isdir(srcpath)):
+        print(f'{_E}ERROR: Can not chdir to {srcpath}, exiting{_X}')
+        exit(1)
+
+    if not echo:
+        print(f'{_I}Current directory is now {srcpath}{_X}')
+    os.chdir(srcpath)
+
+    if not os.path.exists(_config_cmd):
+        print(f'{_E}ERROR: No {_config_cmd} in {srcpath}, exiting{_X}')
+        if not echo:
+            print(f'{_I}Current directory is now {_orig_dir}{_X}')
+        exit(1)
+
+    tmpfile = tempfile.NamedTemporaryFile(delete=False)
+    tmpfile.close()
+
+    # tried using os.popen() but got cmd's output as well
+    # this worked so I didn't try to fix popen
+    cmd = f'echo 0 | {_config_cmd} > {tmpfile.name}'
+    # print(f'{_C}{cmd}{_X}')
+    os.system(cmd)
+
+    for line in open(tmpfile.name, 'r').readlines():
+        if line.startswith('Choose '):
+            break
+        line = line.strip()
+        mat = _mod_mat.match(line)
+        if mat:
+            _mod_list[mat.group(1)] = mat.group(2).lower()
+        if echo:
+            p = line if not mat else f'  {mat.group(2)}'
+            print(p)
+
+    os.unlink(tmpfile.name)
+
+def match_modules(cfg):
+    '''
+    Match up the modules specified in the config file with
+    those collected by get_modules()
+    '''
+    global _mod_list, _mod_selection
+
+    modules = {}
+    for m in cfg['modules']:
+        modules[m.lower()] = True
+
+    for i in sorted(list(_mod_list), key=int):
+        if _mod_list[i] in modules:
+            _mod_selection.append(i)
+            del modules[_mod_list[i]]
+
+    if len(list(modules)):
+        print(f'{_W}WARNING: modules from {cfg["cfgfile"]} not found:{_X}')
+        print(f'    {_W}{" ".join(list(modules))}{_X}')
+        print(f'{_W}Continuing...{_X}')
+
+def read_config(cfgfile):
+    '''
+    Read in the config file and do a quick sanity check.
+    '''
+    config = None
+    try:
+        config = json.load(open(cfgfile, 'r'))
+    except Exception as e:
+        print(f'{_E}ERROR parsing config file ({cfgfile}): {e}{_X}')
+        exit(1)
+    if 'modules' not in config:
+        print(f'{_E}ERROR: {cfgfile} has no "modules" list, exiting{_X}')
+        exit(1)
+    return config
+
+def parse_dest(cfg, args):
+    '''
+    Check destination (if provided) and do sanity checks.
+    Sets cfg['dest'] to (real) absolute path of destination file.
+
+    Valid cases to handle:
+    1) dest is a directory
+    2) dest is a file that doesn't exist in a directory that does
+    3) dest is a file to overwrite
+    dest must be writable.
+
+    Does an exit(1) if anything is amiss.
+    '''
+    if args.dest:
+        cfg['dest'] = args.dest
+    if 'dest' not in cfg:
+        return
+
+    # this might blow up if given nonsense?
+    dest = os.path.realpath(os.path.abspath(cfg['dest']))
+
+    if os.path.exists(dest):
+        mode = os.stat(dest).st_mode
+        if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+            print(f'{_E}ERROR: bad destination: {dest}, exiting{_X}')
+            exit(1)
+        if not os.access(dest, os.W_OK):
+            print(f'{_E}ERROR: can not write to: {dest}, exiting{_X}')
+            exit(1)
+        if stat.S_ISDIR(mode):
+            if not dest.endswith('/'):
+                dest += '/'
+            dest += _corelib
+
+    else:
+        # dest is name of a file that doesn't exist
+        d = os.path.dirname(dest)
+        if not os.path.exists(d):
+            print(f'{_E}ERROR: bad destination dir: {d}, exiting{_X}')
+            exit(1)
+        if not os.access(d, os.W_OK):
+            print(f'{_E}ERROR: can not write to dir: {dest}, exiting{_X}')
+            exit(1)
+
+    # put massaged and validated dest back into the config
+    cfg['dest'] = dest
+
+
+_orig_dir = os.getcwd()
+
+parser = argparse.ArgumentParser(description='Configure and compile miracl lib',
+                                 epilog='command-line values override those ' +
+                                 'from the config file')
+parser.add_argument('config', metavar='file.json', nargs='?',
+                    help='configuration file')
+parser.add_argument('-g', '--genconfig', action='store_true',
+                    help='generate a sample config file on stdout and exit')
+parser.add_argument('-m', '--modules', action='store_true',
+                    help='list miracl modules on stdout and exit')
+parser.add_argument('-s', '--srcdir', metavar='DIR',
+                    help=f'top-level miracl directory (default: {_srcdir_dflt})')
+parser.add_argument('-d', '--dest', metavar='DIR-or-FILE',
+                    help=f'copy {_corelib} here (default: leave in place)')
+parser.add_argument('-n', '--nohighlight', action='store_true',
+                    help='no color highlighting of output')
+args = parser.parse_args()
+
+# print(f'args = {args}')
+
+if args.nohighlight:
+    _E, _W, _I, _C, _X = '', '', '', '', ''
+
+if args.genconfig:
+    print_config()
+    exit(0)
+
+if args.srcdir:
+    # has nice side-effect of stripping trailing '/' if present
+    args.srcdir = os.path.realpath(os.path.abspath(args.srcdir))
+
+if args.modules and args.srcdir:
+    # don't really need the config file here if --srcdir is specified
+    get_modules({'srcdir': args.srcdir}, True)
+    exit(0)
+
+if not args.config:
+    print(f'{_E}ERROR: configuration file needed for this operation{_X}')
+    parser.print_help()
+    exit(1)
+
+cfg = read_config(args.config)
+# print(f'cfg = {cfg}')
+cfg['cfgfile'] = args.config	# for convenience
+              
+if args.srcdir:
+    cfg['srcdir'] = args.srcdir
+elif 'srcdir' not in cfg:
+    cfg['srcdir'] = _srcdir_dflt
+cfg['srcdir'] = os.path.realpath(os.path.abspath(cfg['srcdir']))
+
+parse_dest(cfg, args)
+    
+# print(f'cfg = {cfg}')
+
+if args.modules:
+    # --srcdir wasn't specified before, so give it a go now
+    get_modules(cfg, True)
+    exit(0)
+
+get_modules(cfg, False)
+match_modules(cfg)
+
+if 0 == len(_mod_selection):
+    print(f'{_E}ERROR: No modules from {cfg["cfgfile"]} found, exiting{_X}')
+    print(f'{_I}Current directory is now {_orig_dir}{_X}')
+    exit(1)
+
+cmd = _config_cmd
+for i in _mod_selection:
+    cmd += f' -o {i}'
+print(f'{_C}{cmd}{_X}')
+os.system(cmd)
+
+if 'dest' in cfg:
+    corelib = f'{cfg["srcdir"]}/c/{_corelib}'
+     
+    if cfg['dest'] != corelib:
+        cmd = f'cp -p {corelib} {cfg["dest"]}'
+        print(f'{_C}{cmd}{_X}')
+        os.system(cmd)
+
+print(f'{_I}Current directory is now {_orig_dir}{_X}')
+
+exit(0)

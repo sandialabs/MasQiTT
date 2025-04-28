@@ -1,0 +1,8 @@
+IMPORTANT NOTICE: At installation, the MasQiTT software accesses and requires certain open-source packages that are not part of the MasQiTT package as distributed. Libconfig is governed by the GNU Lesser General Public License v3.0 (LGPL) and wolfSSL is governed by the GNU General Public License v2.0 (GPL). By installing MasQiTT, you are accepting these licenses for these packages.  We strongly advise consulting with a legal expert or attorney prior to any redistribution or modification of the MasQiTT software to ensure compliance with the applicable licensing terms.
+
+To view Open Source License text for third party packages:
+MIRACL Core - see miracl/LICENSE.txt in this package or visit https://github.com/miracl/core/blob/master/LICENSE.txt
+Eclipse Mosquitto - see mosquitto/LICENSE and /LICENSE2.txt or visit https://github.com/eclipse/mosquitto/blob/master/LICENSE.txt
+OpenSSL - see openssl/LICENSE.txt or visit https://github.com/openssl/openssl/blob/master/LICENSE.txt
+WolfSSL - see wolfssl/LICENSE.txt or visit https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+libconfig - see libconfig/LICENSE.txt or visit https://github.com/hyperrealm/libconfig/blob/master/LICENSE
